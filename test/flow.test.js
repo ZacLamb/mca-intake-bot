@@ -8,7 +8,7 @@ const assert = require('assert');
 const path = require('path');
 const stub = (mod, exp) => { const p = require.resolve(path.join(__dirname, '../src', mod)); require.cache[p] = { id: p, filename: p, loaded: true, exports: exp }; };
 
-const sent = []; const tagsAdded = []; const updates = []; const notes = [];
+const sent = []; const tagsAdded = []; const updates = []; const notes = []; const removed = []; const opps = [];
 let messages = [];
 const ghlMock = {
   SEND_TYPE: { TYPE_SMS: 'SMS' }, CHAT_TYPES: new Set(['TYPE_SMS']),
@@ -20,6 +20,10 @@ const ghlMock = {
   addTags: async (a, id, t) => tagsAdded.push(...t),
   addNote: async (a, id, n) => notes.push(n),
   uploadFileToField: async () => ({}),
+  removeTags: async (a, id, t) => removed.push(...t),
+  findStage: async () => ({ pipelineId: 'pipe1', stageId: 'hot' }),
+  contactOpportunities: async () => opps,
+  createOpportunity: async (a, o) => { opps.push(o); return { opportunity: { id: 'opp' + opps.length } }; },
 };
 stub('ghl', ghlMock);
 const replies = []; const systems = [];
@@ -60,12 +64,21 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   await db.setSetting('mode', 'auto');
   await db.q('truncate leads');
   messages.push({ id: 'm2', direction: 'inbound', messageType: 'TYPE_SMS', body: 'here', attachments: ['https://storage.example/a.pdf', 'https://storage.example/b.pdf'], dateAdded: new Date().toISOString() });
-  replies.push({ reply: 'Got both statements — a specialist will reach out!', extracted_fields: { business_legal_name: 'Acme', business_address: '1 Main St', business_start_date: '2019-03', industry: 'plumbing', owner_first_name: 'Joe', owner_last_name: 'Smith', owner_email: 'joe@acme.com', monthly_revenue: '60000', amount_requested: '50000', open_positions: 'none' }, path_choice: 'chat', wants_human: false, stage: 'complete', internal_note: 'done' });
+  replies.push({ reply: 'Got both statements — a specialist will reach out!', extracted_fields: { business_legal_name: 'Acme', business_address: '1 Main St', business_start_date: '2019-03', industry: 'plumbing', owner_first_name: 'Joe', owner_last_name: 'Smith', owner_email: 'joe@acme.com', monthly_revenue: '60000', amount_requested: '50000', open_positions: 'none', use_of_funds: 'payroll', credit_score: '680-720', homeowner: 'yes' }, path_choice: 'chat', wants_human: false, stage: 'complete', internal_note: 'done' });
   agent.schedule(B, 'c1'); await wait(300);
   assert(systems[systems.length - 1].includes('Bravo Capital'), 'account B business name used');
   assert.equal(sent[0].acct, '2', 'sent through account B');
   lead = (await db.q('select * from leads')).rows[0];
   assert(lead.app_complete && lead.statements_complete && lead.location_id === 'locB');
+  // Product labels — same tags the AFE tagger writes
+  for (const t of ['qualifies - mca', 'qualifies - business line of credit', 'qualifies - term loan', 'qualifies - sba loan', 'qualifies - heloc', 'afe screened'])
+    assert(tagsAdded.includes(t), 'missing product tag ' + t + ' in ' + tagsAdded.join(','));
+  assert(!tagsAdded.includes('qualifies - mca reverse'), 'no open positions → no MCA Reverse');
+  assert(!tagsAdded.includes('qualifies - none'));
+  assert(notes.some((n) => n.startsWith('PRODUCT SCREENING')), 'screening note posted');
+  assert.equal(opps.length, 1); assert(/Acme – Application/.test(opps[0].name)); assert.equal(opps[0].pipelineStageId, 'hot');
+  assert(systems[systems.length - 1].includes('E.A.S.Y.') && systems[systems.length - 1].includes('PRODUCT QUESTIONS'), 'sales method + product questions in prompt');
+  assert(!/\$\{STATEMENTS\}/.test(systems[systems.length - 1]), 'statement count substituted');
 
   // Account switch-off stops replies in that account only
   await db.q('truncate leads');

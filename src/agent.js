@@ -6,6 +6,8 @@ const ghl = require('./ghl');
 const schema = require('./appSchema');
 const { callTool } = require('./claude');
 const { redactSensitive } = require('./redact');
+const screening = require('./screening');
+const SALES_METHOD = require('./salesMethod');
 
 const timers = new Map();
 const running = new Set();
@@ -96,6 +98,14 @@ BANK STATEMENTS:
 - Acknowledge files received and say how many months are still needed. Ask for statements in parallel with the application — whichever the merchant is ready to do.
 
 WHEN BOTH ARE DONE: thank them, say a funding specialist will review and reach out, and stop asking for anything.
+${screening.enabled() ? `
+PRODUCT QUESTIONS (so the team can match them to every product we offer):
+- "screening_gaps" in the state lists answers the product rules still need. Work the required ones into the application naturally.
+- The yes/no ones (own their home, invoice business customers on net terms, sell online, W-2 income) unlock extra products: ask them together in ONE quick message near the end, e.g. "Last few quick yes/no's so we can match you to every option: do you own your home, sell online, invoice other businesses on net terms, or have W-2 income?" Don't ask again if already answered or the merchant skips.
+- For credit, an estimate or range is fine ("roughly — under 600, 600s, 700+?"). Never ask for SSN to "check" it.
+- NEVER tell the merchant which products they qualify for or might qualify for. Product matching is internal; a specialist presents options.
+` : ''}
+${SALES_METHOD.replace(/\$\{STATEMENTS\}/g, cfg.statementsRequired)}
 
 PLAYBOOK (learned from past successful conversations — follow its tone, phrasing and objection handling, but the HARD RULES always win; use this company's name, ${acct.businessName}, not any name that appears in the playbook):
 ${playbook || '(No playbook yet — be friendly, direct and brief.)'}`;
@@ -218,6 +228,7 @@ async function handle(acct, contactId, { initiate = false } = {}) {
     statement_files_received: lead.statements.length,
     statements_needed: cfg.statementsRequired,
     new_files_this_turn: newFiles,
+    screening_gaps: screening.enabled() && lead.path !== 'link' ? screening.gaps(lead.fields) : [],
     channel,
   };
 
@@ -251,6 +262,20 @@ ${initiate ? 'Send the first message to start the intake.' : 'Write the next rep
   if (lead.statements.length >= cfg.statementsRequired) lead.statements_complete = true;
   if (lead.statements_complete && !stmtWasComplete) newTags.push(cfg.statementsReceivedTag);
 
+  // Product labels — same rules + tags as afe-product-tagger. Chat-path apps only: online-app
+  // applicants are already screened by the tagger's own workflow. Re-screens if answers change.
+  if (screening.enabled() && lead.app_complete && lead.path !== 'link') {
+    const sig = screeningSignature(lead.fields);
+    if (lead.fields._screen_sig !== sig) {
+      try {
+        await screening.labelInGhl(acct, contactId, lead.fields, contact.tags || []);
+        lead.fields._screen_sig = sig;
+      } catch (e) {
+        await db.logEvent(contactId, 'screening_error', e.message);
+      }
+    }
+  }
+
   lead.stage = lead.app_complete && lead.statements_complete ? 'complete' : out.stage;
   if (out.wants_human) {
     lead.handed_off = true;
@@ -276,6 +301,9 @@ ${initiate ? 'Send the first message to start the intake.' : 'Write the next rep
     );
   }
 }
+
+const screeningSignature = (fields) =>
+  JSON.stringify(schema.chatFields.filter((f) => f.screen).map((f) => fields[f.key] || ''));
 
 async function saveLeadAndTag(acct, contactId, lead, tags) {
   await db.saveLead(lead);

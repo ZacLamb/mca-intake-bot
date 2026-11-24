@@ -124,7 +124,7 @@ router.get('/leads', async (req, res) => {
   const leads = (await db.q('select * from leads order by updated_at desc limit 200')).rows;
   res.send(page('Leads', `<div class="card"><table><tr><th>Account</th><th>Contact</th><th>Stage</th><th>Path</th><th>App</th><th>Statements</th><th>Handoff</th><th></th></tr>
 ${leads.map((l) => `<tr><td>${esc(acctName(l.location_id))}</td><td><code>${esc(l.contact_id)}</code><br><small>${esc(l.fields.business_legal_name || '')}</small></td><td>${esc(l.stage)}</td><td>${esc(l.path)}</td>
-<td>${l.app_complete ? '✅' : Object.keys(l.fields).length + ' fields'}</td><td>${l.statements.length}/${cfg.statementsRequired}</td><td>${esc(l.handoff_reason || '')}</td>
+<td>${l.app_complete ? '✅' : Object.keys(l.fields).filter((k) => k[0] !== '_').length + ' fields'}</td><td>${l.statements.length}/${cfg.statementsRequired}</td><td>${esc(l.handoff_reason || '')}</td>
 <td><form method="post" action="/admin/leads/${encodeURIComponent(l.contact_id)}/reset"><button class="alt">Resume bot</button></form></td></tr>`).join('')}</table></div>`));
 });
 

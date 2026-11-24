@@ -109,7 +109,8 @@ Return bullet-point lessons under these headings:
 
 const MERGE_SYSTEM = `You maintain a playbook that an AI intake assistant for an MCA company follows in SMS/email chats.
 The assistant's ONLY job is collecting the funding application and bank statements. Never include rates, pricing, approval promises, timelines, or advice outside that job.
-Write in plain markdown, max ~1500 words, practical and specific.`;
+Write in plain markdown, max ~1500 words, practical and specific.
+The company already has a sales method (C.A.R.E. for guarded merchants, industry-insider questions, one depth question before the ask, Receive-Reflect-Reframe for objections, E.A.S.Y. close asking for one small thing at a time, value-first follow-ups). Keep the playbook consistent with it: capture what THIS company's reps actually said that worked, in that spirit.`;
 
 async function mergePlaybook(oldPlaybook, lessons, corrections) {
   const user = `CURRENT PLAYBOOK:

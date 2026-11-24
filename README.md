@@ -11,6 +11,13 @@ The bot connects to as many sub-accounts as you configure (`GHL_API_KEY`/`GHL_LO
 - Set `LEARN_ONLY_2=true` (or `_3`…) on an account whose **history you only want to learn from**. The bot reads its conversations but can never message from it, and webhooks from it are ignored. Its token only needs read scopes (View Conversations, View Conversation Messages, View Contacts).
 - Messaging accounts also have an ON/OFF switch on the dashboard.
 
+## Sales method + product labeling
+
+- **Sales method** (`src/salesMethod.js`): the owner's sales book ("The Book of Business") distilled for text intake — C.A.R.E. for guarded merchants, industry-insider questions, one depth question before the ask, Receive/Reflect/Reframe objections, the E.A.S.Y. close (ask for one small thing at a time), value-first follow-ups. It's in every prompt; the learned playbook stays consistent with it.
+- **Product labeling** (`src/screening.js` + `src/products/`): when a merchant finishes the application **in chat**, the bot runs the answers through the AFE product guide rules — `src/products/*.js` are **unchanged copies of `ZacLamb/afe-product-tagger`** (keep them in sync if criteria change) — and writes exactly what the tagger writes for the other intake paths: `qualifies - <product>` / `possible - <product>` / `qualifies - none` / `afe screened` tags (stale product tags removed), the plain-English screening note, and one **Pre Submission Pipeline → Hot Lead** opportunity. Re-screens if the answers change. Online-app (link) applicants are left to the tagger's own workflow, so nothing is double-tagged.
+- The bot asks the questions the rules need (credit range, use of funds, open advances, plus one quick yes/no round for home ownership / selling online / net-terms invoices / W-2 that unlocks HELOC, E-Commerce, Factoring, Personal Loan). It never tells the merchant what they qualify for.
+- Set `PRODUCT_SCREENING=false` to turn labeling off; `APPLICANT_OPPORTUNITY=false` to skip the opportunity. The GHL token needs **View/Edit Opportunities** for the opportunity (tags and note still work without it).
+
 ## How it works
 
 ```

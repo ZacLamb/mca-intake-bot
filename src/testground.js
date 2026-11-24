@@ -9,6 +9,7 @@ const schema = require('./appSchema');
 const { callTool } = require('./claude');
 const { redactSensitive } = require('./redact');
 const { systemPrompt, renderTranscript, RESPOND_TOOL } = require('./agent');
+const screening = require('./screening');
 
 const router = express.Router();
 
@@ -62,6 +63,7 @@ async function botTurn(s, { initiate = false, newFiles = 0, channel = 'SMS' } = 
     statement_files_received: lead.statements.length,
     statements_needed: cfg.statementsRequired,
     new_files_this_turn: newFiles,
+    screening_gaps: screening.enabled() && lead.path !== 'link' ? screening.gaps(lead.fields) : [],
     channel,
   };
   const playbook = (await db.latestPlaybook())?.content;
@@ -83,6 +85,10 @@ ${initiate ? 'Send the first message to start the intake.' : 'Write the next rep
   if (!lead.app_complete && schema.required.every((k) => lead.fields[k])) {
     lead.app_complete = true;
     events.push(`Tag "${cfg.appReceivedTag}" would be added + note with the application answers`);
+    if (screening.enabled() && lead.path !== 'link') {
+      const L = screening.labels(lead.fields);
+      events.push(`Product tags that would be written: ${L.tags.join(', ')} + screening note + "Hot Lead" opportunity`);
+    }
   }
   if (!lead.statements_complete && lead.statements.length >= cfg.statementsRequired) {
     lead.statements_complete = true;
@@ -100,7 +106,14 @@ ${initiate ? 'Send the first message to start the intake.' : 'Write the next rep
   return { reply, note: out.internal_note || '', events };
 }
 
-const view = (s) => ({ id: s.id, messages: s.messages, lead: s.lead, statementsRequired: cfg.statementsRequired });
+const view = (s) => {
+  const out = { id: s.id, messages: s.messages, lead: s.lead, statementsRequired: cfg.statementsRequired };
+  if (screening.enabled()) {
+    const L = screening.labels(s.lead.fields || {});
+    out.products = { qualifies: L.qualifies, possible: L.possible, notEnoughInfo: L.notEnoughInfo, tags: L.tags, note: L.note };
+  }
+  return out;
+};
 
 router.post('/api/new', async (req, res) => {
   const s = { id: crypto.randomUUID(), messages: [], lead: newLead() };
@@ -192,6 +205,7 @@ label.file{font-size:13px;color:#2563eb;cursor:pointer;white-space:nowrap}
  <div class="side">
   <div class="card"><h3>Progress</h3><div id="prog"></div></div>
   <div class="card"><h3>Application answers collected</h3><div id="fields"></div></div>
+  <div class="card"><h3>Product labels (AFE product guide)</h3><div id="products" class="note">—</div></div>
   <div class="card"><h3>Bot's internal note (last turn)</h3><div id="botnote" class="note">—</div></div>
   <div class="card note">Bot speaks as <b>${(acct.businessName || '').replace(/</g, '&lt;')}</b>${acct.appLinkUrl ? ` · app link ${acct.appLinkUrl.replace(/</g, '&lt;')}` : ''}. Click <b>"Fix this reply"</b> under any bot message to write what it should have said; the bot learns it on the next learning run.</div>
  </div>
@@ -223,7 +237,11 @@ function render(turn){
    '<div class="kv"><span>Application</span><span class="pill '+(L.app_complete?'ok':'')+'">'+(L.app_complete?'Complete':'In progress')+'</span></div>'+
    '<div class="kv"><span>Statements</span><span class="pill '+(L.statements_complete?'ok':'')+'">'+L.statements.length+' / '+S.statementsRequired+'</span></div>'+
    (L.handed_off?'<div class="kv"><span>Handed off</span><span class="pill warn">'+esc(L.handoff_reason)+'</span></div>':'');
-  const ks=Object.keys(L.fields);
+  const ks=Object.keys(L.fields).filter(k=>k[0]!=='_');
+  if(S.products){const P=S.products,row=(t,a,c)=>a.length?'<div class="kv"><span>'+t+'</span><span>'+a.map(x=>'<span class="pill '+c+'">'+esc(x)+'</span>').join(' ')+'</span></div>':'';
+    $('products').innerHTML=(row('Qualifies',P.qualifies,'ok')+row('Possible',P.possible,'')+row('Need more info',P.notEnoughInfo,'warn'))+
+    '<details style="margin-top:6px"><summary>Full screening note (posted to the contact)</summary><pre style="white-space:pre-wrap;font-size:11px">'+esc(P.note)+'</pre></details>'+
+    '<div class="note" style="margin-top:6px">Internal only — the bot never tells the merchant what they qualify for.</div>';}
   $('fields').innerHTML=ks.length?ks.map(k=>'<div class="kv"><span>'+esc(LABELS[k]||k)+'</span><span>'+esc(L.fields[k])+'</span></div>').join(''):'<div class="note">Nothing yet.</div>';
   if(turn&&turn.note!==undefined)$('botnote').textContent=turn.note||'—';
 }

@@ -74,6 +74,32 @@ async function getContact(acct, id) {
 const updateContact = (acct, id, payload) => ghl(acct, 'PUT', `/contacts/${id}`, { body: payload });
 const addTags = (acct, id, tags) => ghl(acct, 'POST', `/contacts/${id}/tags`, { body: { tags } });
 const addNote = (acct, id, body) => ghl(acct, 'POST', `/contacts/${id}/notes`, { body: { body } });
+const removeTags = (acct, id, tags) => (tags.length ? ghl(acct, 'DELETE', `/contacts/${id}/tags`, { body: { tags } }) : null);
+
+// ---------- Pipelines & opportunities ----------
+const pipelineCache = new Map();
+async function pipelines(acct) {
+  const hit = pipelineCache.get(acct.locationId);
+  if (hit && Date.now() - hit.at < 10 * 60e3) return hit.list;
+  const r = await ghl(acct, 'GET', '/opportunities/pipelines', { query: { locationId: acct.locationId } });
+  pipelineCache.set(acct.locationId, { at: Date.now(), list: r.pipelines || [] });
+  return r.pipelines || [];
+}
+async function findStage(acct, pipelineName, stageName) {
+  const norm = (x) => String(x || '').trim().toLowerCase();
+  const p = (await pipelines(acct)).find((x) => norm(x.name) === norm(pipelineName));
+  if (!p) throw new Error(`Pipeline "${pipelineName}" not found in ${acct.name}`);
+  const st = (stageName && (p.stages || []).find((x) => norm(x.name) === norm(stageName))) || (p.stages || [])[0];
+  if (!st) throw new Error(`Pipeline "${pipelineName}" has no stages`);
+  return { pipelineId: p.id, stageId: st.id };
+}
+async function contactOpportunities(acct, contactId, pipelineId) {
+  const r = await ghl(acct, 'GET', '/opportunities/search', {
+    query: { location_id: acct.locationId, contact_id: contactId, pipeline_id: pipelineId, limit: 100 },
+  });
+  return r.opportunities || [];
+}
+const createOpportunity = (acct, o) => ghl(acct, 'POST', '/opportunities/', { body: { status: 'open', ...o } });
 
 async function getCustomFields(acct) {
   const r = await ghl(acct, 'GET', `/locations/${acct.locationId}/customFields`);
@@ -92,6 +118,6 @@ async function uploadFileToField(acct, contactId, fieldId, buffer, filename, mim
 }
 
 module.exports = {
-  searchConversations, getAllMessages, sendMessage, getContact, updateContact, addTags, addNote,
-  getCustomFields, uploadFileToField, SEND_TYPE, CHAT_TYPES,
+  searchConversations, getAllMessages, sendMessage, getContact, updateContact, addTags, removeTags, addNote,
+  getCustomFields, uploadFileToField, findStage, contactOpportunities, createOpportunity, SEND_TYPE, CHAT_TYPES,
 };

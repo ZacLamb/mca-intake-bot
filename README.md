@@ -3,6 +3,13 @@
 A GHL conversation bot with **one job**: get the merchant's **funding application** and **bank statements**.
 It learns from your sub-account's past conversations (what got merchants to send statements) and keeps learning every night, including from the edits you make to its drafts.
 
+## Multiple GHL accounts
+
+The bot connects to as many sub-accounts as you configure (`GHL_API_KEY`/`GHL_LOCATION_ID`, then `_2`, `_3`…).
+- **Learning** reads conversations from **all** accounts and builds **one shared playbook**.
+- **Replies** go out through the account the merchant texted. Each account uses its own token, business name, app link and field mapping. The webhook tells the accounts apart by the `location.id` GHL sends; you can add `&account=2` to the URL as a fallback.
+- The dashboard has an ON/OFF switch per account, so one account can be learn-only.
+
 ## How it works
 
 ```
@@ -49,8 +56,11 @@ Create a new private repo (e.g. `mca-intake-bot`) and upload every file in this 
 
 | Variable | Required | What |
 |---|---|---|
-| `GHL_API_KEY` | ✅ | Private Integration token for the sub-account (Settings → Private Integrations). Scopes: conversations (read/write), conversations/message (read/write), contacts (read/write), locations/customFields (read), forms (write, if uploading statements to a field) |
-| `GHL_LOCATION_ID` | ✅ | The sub-account's location ID |
+| `GHL_API_KEY` | ✅ | **Account 1** Private Integration token (Settings → Private Integrations). Scopes: conversations (read/write), conversations/message (read/write), contacts (read/write), locations/customFields (read), forms (write, if uploading statements to a field) |
+| `GHL_LOCATION_ID` | ✅ | Account 1 location ID |
+| `ACCOUNT_NAME` | | Label for account 1 in the dashboard |
+| `GHL_API_KEY_2` / `GHL_LOCATION_ID_2` | | **Account 2**: same as above for the second sub-account. Add `_3`, `_4`… for more |
+| `ACCOUNT_NAME_2`, `BUSINESS_NAME_2`, `APP_LINK_URL_2`, `FIELD_MAP_2`, `STATEMENT_FILE_FIELD_ID_2`, `APP_SUBMITTED_TAG_2`, `WIN_TAGS_2` | | Per-account overrides. Anything left unset falls back to the un-suffixed value (except field maps/IDs, which are per account) |
 | `ANTHROPIC_API_KEY` | ✅ | Your Claude API key |
 | `DATABASE_URL` | ✅ | `${{Postgres.DATABASE_URL}}` |
 | `WEBHOOK_SECRET` | ✅ | Any long random string |

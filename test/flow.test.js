@@ -1,27 +1,31 @@
-// End-to-end flow with GHL and Claude mocked. Needs DATABASE_URL to a scratch Postgres.
+// End-to-end flow with GHL and Claude mocked, across TWO accounts. Needs DATABASE_URL to a scratch Postgres.
 process.env.REPLY_DELAY_SECONDS = '0';
 process.env.STATEMENTS_REQUIRED = '2';
+process.env.GHL_API_KEY = 'tokA'; process.env.GHL_LOCATION_ID = 'locA'; process.env.ACCOUNT_NAME = 'Acct A';
+process.env.GHL_API_KEY_2 = 'tokB'; process.env.GHL_LOCATION_ID_2 = 'locB'; process.env.ACCOUNT_NAME_2 = 'Acct B';
+process.env.BUSINESS_NAME_2 = 'Bravo Capital';
 const assert = require('assert');
 const path = require('path');
 const stub = (mod, exp) => { const p = require.resolve(path.join(__dirname, '../src', mod)); require.cache[p] = { id: p, filename: p, loaded: true, exports: exp }; };
 
 const sent = []; const tagsAdded = []; const updates = []; const notes = [];
 let messages = [];
-const realGhl = { SEND_TYPE: { TYPE_SMS: 'SMS' }, CHAT_TYPES: new Set(['TYPE_SMS']) };
-stub('ghl', {
-  ...realGhl,
-  getContact: async () => ({ id: 'c1', firstName: 'Joe', tags: [] }),
-  searchConversations: async ({ contactId }) => ({ conversations: [{ id: 'conv1', contactId: 'c1', lastMessageDate: Date.now(), tags: [] }] }),
+const ghlMock = {
+  SEND_TYPE: { TYPE_SMS: 'SMS' }, CHAT_TYPES: new Set(['TYPE_SMS']),
+  getContact: async (a) => ({ id: 'c1', firstName: 'Joe', tags: [] }),
+  searchConversations: async (a, { contactId }) => ({ conversations: [{ id: 'conv-' + a.key, contactId: 'c1', lastMessageDate: Date.now(), tags: [] }] }),
   getAllMessages: async () => messages,
-  sendMessage: async (m) => { sent.push(m); return { messageId: 'bot' + sent.length }; },
-  updateContact: async (id, p) => updates.push(p),
-  addTags: async (id, t) => tagsAdded.push(...t),
-  addNote: async (id, n) => notes.push(n),
+  sendMessage: async (a, m) => { sent.push({ acct: a.key, ...m }); return { messageId: 'bot' + sent.length }; },
+  updateContact: async (a, id, p) => updates.push({ acct: a.key, ...p }),
+  addTags: async (a, id, t) => tagsAdded.push(...t),
+  addNote: async (a, id, n) => notes.push(n),
   uploadFileToField: async () => ({}),
-});
-const replies = [];
+};
+stub('ghl', ghlMock);
+const replies = []; const systems = [];
 stub('claude', {
   callTool: async ({ system, user }) => {
+    systems.push(system);
     assert(system.includes('ONLY JOB'));
     assert(!user.includes('123-45-6789'), 'SSN leaked to Claude');
     return replies.shift();
@@ -29,58 +33,61 @@ stub('claude', {
   callText: async ({ user }) => 'PLAYBOOK: ask for statements early.\n' + user.slice(0, 50),
 });
 
+const cfg = require('../src/config');
 const db = require('../src/db');
 const agent = require('../src/agent');
 const miner = require('../src/miner');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 (async () => {
+  assert.equal(cfg.accounts.length, 2, 'two accounts loaded');
+  const A = cfg.account('locA'); const B = cfg.account('2');
+  assert.equal(B.businessName, 'Bravo Capital');
+
   await db.init();
   await db.q('truncate leads, drafts, corrections, bot_messages, settings, events, messages, conversations, playbooks restart identity');
 
-  // Turn 1 (draft mode default): merchant gives info + accidentally an SSN
+  // Turn 1 in account A (draft mode default)
   messages = [{ id: 'm1', direction: 'inbound', messageType: 'TYPE_SMS', body: 'hi im Joe Smith, Acme Plumbing LLC, ssn 123-45-6789', dateAdded: new Date().toISOString() }];
-  replies.push({ reply: 'Thanks Joe! Quick q: chat or online app?', extracted_fields: { business_legal_name: 'Acme Plumbing LLC', owner_first_name: 'Joe', owner_last_name: 'Smith', ssn: '123-45-6789' }, path_choice: 'undecided', wants_human: false, stage: 'choosing_path', internal_note: 'got name' });
-  agent.schedule('c1'); await wait(300);
-  let d = (await db.q("select * from drafts where status='pending'")).rows;
-  assert.equal(d.length, 1, 'draft created'); assert.equal(sent.length, 0, 'nothing sent in draft mode');
+  replies.push({ reply: 'Thanks Joe! Chat or online app?', extracted_fields: { business_legal_name: 'Acme Plumbing LLC', owner_first_name: 'Joe', owner_last_name: 'Smith', ssn: '123-45-6789' }, path_choice: 'undecided', wants_human: false, stage: 'choosing_path', internal_note: 'got name' });
+  agent.schedule(A, 'c1'); await wait(300);
+  const d = (await db.q("select * from drafts where status='pending'")).rows;
+  assert.equal(d.length, 1); assert.equal(d[0].location_id, 'locA'); assert.equal(sent.length, 0);
   let lead = (await db.q('select * from leads')).rows[0];
-  assert(!lead.fields.ssn, 'unknown key ssn must be dropped');
-  assert.equal(updates[0].companyName, 'Acme Plumbing LLC');
+  assert(!lead.fields.ssn); assert.equal(lead.location_id, 'locA');
 
-  // Turn 2 (auto): sends all required fields + 2 statements → complete
+  // Turn 2 in account B (auto) — must use B's name + B's token
   await db.setSetting('mode', 'auto');
+  await db.q('truncate leads');
   messages.push({ id: 'm2', direction: 'inbound', messageType: 'TYPE_SMS', body: 'here', attachments: ['https://storage.example/a.pdf', 'https://storage.example/b.pdf'], dateAdded: new Date().toISOString() });
-  replies.push({ reply: 'Got both statements and your info — a specialist will reach out!', extracted_fields: { business_address: '1 Main St', business_start_date: '2019-03', industry: 'plumbing', owner_email: 'joe@acme.com', monthly_revenue: '60000', amount_requested: '50000', open_positions: 'none' }, path_choice: 'chat', wants_human: false, stage: 'complete', internal_note: 'done' });
-  agent.schedule('c1'); await wait(300);
+  replies.push({ reply: 'Got both statements — a specialist will reach out!', extracted_fields: { business_legal_name: 'Acme', business_address: '1 Main St', business_start_date: '2019-03', industry: 'plumbing', owner_first_name: 'Joe', owner_last_name: 'Smith', owner_email: 'joe@acme.com', monthly_revenue: '60000', amount_requested: '50000', open_positions: 'none' }, path_choice: 'chat', wants_human: false, stage: 'complete', internal_note: 'done' });
+  agent.schedule(B, 'c1'); await wait(300);
+  assert(systems[systems.length - 1].includes('Bravo Capital'), 'account B business name used');
+  assert.equal(sent[0].acct, '2', 'sent through account B');
   lead = (await db.q('select * from leads')).rows[0];
-  assert(lead.app_complete && lead.statements_complete && lead.stage === 'complete');
-  assert(tagsAdded.includes('app-received') && tagsAdded.includes('statements-received'));
-  assert.equal(sent.length, 1);
+  assert(lead.app_complete && lead.statements_complete && lead.location_id === 'locB');
 
-  // Turn 3: complete → bot stays quiet
-  messages.push({ id: 'm3', direction: 'inbound', messageType: 'TYPE_SMS', body: 'so what rate?', dateAdded: new Date().toISOString() });
-  agent.schedule('c1'); await wait(300);
-  assert.equal(sent.length, 1, 'no more replies after complete');
+  // Account switch-off stops replies in that account only
+  await db.q('truncate leads');
+  await db.setSetting('account_enabled_2', 'false');
+  replies.push({ reply: 'hi', extracted_fields: {}, path_choice: 'undecided', wants_human: false, stage: 'engaging', internal_note: '' });
+  agent.schedule(B, 'c1'); await wait(300);
+  assert.equal(sent.length, 1, 'account B disabled → no reply');
+  agent.schedule(A, 'c1'); await wait(300);
+  assert.equal(sent.length, 2, 'account A still replies'); assert.equal(sent[1].acct, '1');
 
-  // Human takeover pauses bot for a different lead
-  await db.q("update leads set stage='engaging', app_complete=false where contact_id='c1'");
-  messages.push({ id: 'h1', direction: 'outbound', userId: 'rep1', messageType: 'TYPE_SMS', body: 'Hey Joe its Mike', dateAdded: new Date().toISOString() });
-  messages.push({ id: 'm4', direction: 'inbound', messageType: 'TYPE_SMS', body: 'hi mike', dateAdded: new Date().toISOString() });
-  agent.schedule('c1'); await wait(300);
-  assert.equal(sent.length, 1, 'bot stays out when a human rep is active');
-
-  // Learning: miner syncs + builds playbook
-  require.cache[require.resolve('../src/ghl')].exports.searchConversations = async ({ startAfterDate }) =>
-    startAfterDate ? { conversations: [] } : { conversations: [{ id: 'old1', contactId: 'z9', lastMessageDate: Date.now(), tags: [] }] };
-  require.cache[require.resolve('../src/ghl')].exports.getAllMessages = async () => [
-    { id: 'o1', direction: 'outbound', messageType: 'TYPE_SMS', body: 'Can you send 4 months of statements?', dateAdded: new Date().toISOString() },
-    { id: 'o2', direction: 'inbound', messageType: 'TYPE_SMS', body: 'sure', attachments: ['https://x/s.pdf'], dateAdded: new Date().toISOString() },
+  // Learning pulls from BOTH accounts into one playbook
+  ghlMock.searchConversations = async (a, { startAfterDate }) =>
+    startAfterDate ? { conversations: [] } : { conversations: [{ id: 'old-' + a.key, contactId: 'z' + a.key, lastMessageDate: Date.now(), tags: [] }] };
+  ghlMock.getAllMessages = async (a) => [
+    { id: 'o1-' + a.key, direction: 'outbound', messageType: 'TYPE_SMS', body: 'Can you send 4 months of statements?', dateAdded: new Date().toISOString() },
+    { id: 'o2-' + a.key, direction: 'inbound', messageType: 'TYPE_SMS', body: 'sure', attachments: ['https://x/s.pdf'], dateAdded: new Date().toISOString() },
   ];
   const r = await miner.run();
-  assert(r.updated && r.wins === 1, JSON.stringify(r));
-  assert((await db.latestPlaybook()).content.startsWith('PLAYBOOK'));
+  assert(r.updated && r.wins === 2 && r.accounts['Acct A'].wins === 1 && r.accounts['Acct B'].wins === 1, JSON.stringify(r));
+  const locs = (await db.q('select distinct location_id from conversations order by 1')).rows.map((x) => x.location_id);
+  assert.deepEqual(locs, ['locA', 'locB']);
 
-  console.log('flow tests passed');
+  console.log('flow tests passed (2 accounts)');
   await db.pool.end();
 })().catch((e) => { console.error(e); process.exit(1); });

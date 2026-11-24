@@ -17,24 +17,30 @@ const authorized = (req) =>
 // Works with a GHL workflow "Webhook" action (contact_id) or a marketplace InboundMessage event (contactId)
 const contactIdFrom = (b) => b.contact_id || b.contactId || b.contact?.id || b.customData?.contact_id;
 
-// GHL workflow: trigger "Customer Replied" → Webhook → POST /webhook/inbound?secret=...
-app.post('/webhook/inbound', (req, res) => {
-  if (!authorized(req)) return res.status(401).json({ error: 'bad secret' });
-  const contactId = contactIdFrom(req.body || {});
-  if (!contactId) return res.status(400).json({ error: 'no contact id in payload' });
-  if (req.body.direction === 'outbound') return res.json({ ignored: 'outbound' });
-  agent.schedule(contactId);
-  res.json({ queued: contactId });
-});
+// Which GHL account sent this? Workflow webhooks include location.id; ?account=2 also works.
+const accountFrom = (req) => {
+  const b = req.body || {};
+  const id = b.location?.id || b.locationId || b.location_id || req.query.account || req.query.locationId;
+  return cfg.account(id) || (cfg.accounts.length === 1 ? cfg.accounts[0] : null);
+};
 
+function intake(initiate) {
+  return (req, res) => {
+    if (!authorized(req)) return res.status(401).json({ error: 'bad secret' });
+    const contactId = contactIdFrom(req.body || {});
+    if (!contactId) return res.status(400).json({ error: 'no contact id in payload' });
+    const acct = accountFrom(req);
+    if (!acct) return res.status(400).json({ error: 'unknown GHL account (location id not configured)' });
+    if (!initiate && req.body.direction === 'outbound') return res.json({ ignored: 'outbound' });
+    agent.schedule(acct, contactId, { initiate });
+    res.json({ queued: contactId, account: acct.name });
+  };
+}
+
+// GHL workflow: trigger "Customer Replied" → Webhook → POST /webhook/inbound?secret=...
+app.post('/webhook/inbound', intake(false));
 // Optional: have the bot send the FIRST message (e.g. new lead workflow) → POST /webhook/start?secret=...
-app.post('/webhook/start', (req, res) => {
-  if (!authorized(req)) return res.status(401).json({ error: 'bad secret' });
-  const contactId = contactIdFrom(req.body || {});
-  if (!contactId) return res.status(400).json({ error: 'no contact id in payload' });
-  agent.schedule(contactId, { initiate: true });
-  res.json({ queued: contactId });
-});
+app.post('/webhook/start', intake(true));
 
 app.use('/admin', require('./admin'));
 

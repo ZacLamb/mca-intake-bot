@@ -1,20 +1,48 @@
 // All settings come from environment variables (Railway → Variables).
 const list = (v) => (v || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
 const int = (v, d) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : d);
+const json = (v, name) => {
+  try {
+    return JSON.parse(v || '{}');
+  } catch (e) {
+    console.error(`${name} is not valid JSON — ignoring it.`);
+    return {};
+  }
+};
 
-let fieldMap = {};
-try {
-  fieldMap = JSON.parse(process.env.FIELD_MAP || '{}');
-} catch (e) {
-  console.error('FIELD_MAP is not valid JSON — ignoring it.');
+// GHL accounts. Account 1 uses GHL_API_KEY / GHL_LOCATION_ID.
+// Account 2+ add a suffix: GHL_API_KEY_2 / GHL_LOCATION_ID_2, ACCOUNT_NAME_2, APP_LINK_URL_2, FIELD_MAP_2 ...
+// Anything not set per-account falls back to the un-suffixed value.
+function loadAccounts() {
+  const out = [];
+  for (let i = 1; i <= 10; i++) {
+    const s = i === 1 ? '' : `_${i}`;
+    const env = (k) => process.env[`${k}${s}`];
+    const token = env('GHL_API_KEY');
+    const locationId = env('GHL_LOCATION_ID');
+    if (!token || !locationId) continue;
+    out.push({
+      key: String(i),
+      name: env('ACCOUNT_NAME') || `Account ${i}`,
+      token,
+      locationId,
+      businessName: env('BUSINESS_NAME') || process.env.BUSINESS_NAME || 'our funding team',
+      appLinkUrl: env('APP_LINK_URL') || process.env.APP_LINK_URL || '',
+      statementUploadUrl: env('STATEMENT_UPLOAD_URL') || process.env.STATEMENT_UPLOAD_URL || '',
+      fieldMap: json(env('FIELD_MAP') || (i === 1 ? '' : process.env.FIELD_MAP), `FIELD_MAP${s}`),
+      statementFileFieldId: env('STATEMENT_FILE_FIELD_ID') || '',
+      appSubmittedTag: (env('APP_SUBMITTED_TAG') || process.env.APP_SUBMITTED_TAG || '').toLowerCase(),
+      winTags: list(env('WIN_TAGS') || process.env.WIN_TAGS),
+    });
+  }
+  return out;
 }
 
 const cfg = {
   port: process.env.PORT || 3000,
+  accounts: loadAccounts(),
 
   // Required
-  ghlToken: process.env.GHL_API_KEY,            // Private Integration token for the sub-account
-  locationId: process.env.GHL_LOCATION_ID,
   anthropicKey: process.env.ANTHROPIC_API_KEY,
   databaseUrl: process.env.DATABASE_URL,
   webhookSecret: process.env.WEBHOOK_SECRET,
@@ -23,39 +51,34 @@ const cfg = {
   // Bot identity
   model: process.env.CLAUDE_MODEL || 'claude-sonnet-5-5',
   botName: process.env.BOT_NAME || 'Alex',
-  businessName: process.env.BUSINESS_NAME || 'our funding team',
-
-  // Links (optional but recommended)
-  appLinkUrl: process.env.APP_LINK_URL || '',               // your online application / GHL survey
-  statementUploadUrl: process.env.STATEMENT_UPLOAD_URL || '', // optional upload page for statements
   statementsRequired: int(process.env.STATEMENTS_REQUIRED, 4),
 
   // Behavior
   defaultMode: (process.env.BOT_MODE || 'draft').toLowerCase(), // draft | auto (can be changed in dashboard)
-  replyDelayMs: int(process.env.REPLY_DELAY_SECONDS, 25) * 1000, // wait for merchant to finish typing
+  replyDelayMs: int(process.env.REPLY_DELAY_SECONDS, 25) * 1000,
   humanPauseHours: int(process.env.HUMAN_PAUSE_HOURS, 24),
 
-  // Tags
-  engageTag: (process.env.ENGAGE_TAG || '').toLowerCase(),   // if set, bot ONLY talks to contacts with this tag
+  // Tags (shared by all accounts)
+  engageTag: (process.env.ENGAGE_TAG || '').toLowerCase(),
   killTag: (process.env.KILL_TAG || 'bot-off').toLowerCase(),
   handoffTag: process.env.HANDOFF_TAG || 'bot-handoff',
   appReceivedTag: process.env.APP_RECEIVED_TAG || 'app-received',
   statementsReceivedTag: process.env.STATEMENTS_RECEIVED_TAG || 'statements-received',
-  appSubmittedTag: (process.env.APP_SUBMITTED_TAG || '').toLowerCase(), // tag your form workflow adds on submit
-  winTags: list(process.env.WIN_TAGS), // tags that mean "this past conversation was a win" for learning
-
-  // GHL custom field mapping: {"monthly_revenue":"<customFieldId>", ...}
-  fieldMap,
-  statementFileFieldId: process.env.STATEMENT_FILE_FIELD_ID || '', // file-upload custom field for statements
 
   // Learning
   mineCron: process.env.MINE_CRON || '0 3 * * *',
   mineDaysBack: int(process.env.MINE_DAYS_BACK, 180),
-  mineMaxConversations: int(process.env.MINE_MAX_CONVERSATIONS, 2000),
+  mineMaxConversations: int(process.env.MINE_MAX_CONVERSATIONS, 2000), // per account
   timezone: process.env.CRON_TZ || 'America/New_York',
 };
 
-cfg.missing = () =>
-  ['ghlToken', 'locationId', 'anthropicKey', 'databaseUrl', 'webhookSecret', 'adminPassword'].filter((k) => !cfg[k]);
+cfg.account = (idOrKey) =>
+  idOrKey ? cfg.accounts.find((a) => a.locationId === idOrKey || a.key === String(idOrKey)) : undefined;
+
+cfg.missing = () => {
+  const m = ['anthropicKey', 'databaseUrl', 'webhookSecret', 'adminPassword'].filter((k) => !cfg[k]);
+  if (!cfg.accounts.length) m.unshift('GHL_API_KEY + GHL_LOCATION_ID');
+  return m;
+};
 
 module.exports = cfg;

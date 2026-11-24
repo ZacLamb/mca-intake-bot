@@ -36,6 +36,10 @@ async function init() {
     create table if not exists settings (key text primary key, value text);
     create table if not exists events (
       id serial primary key, contact_id text, kind text, detail text, created_at timestamptz default now());
+    alter table conversations add column if not exists location_id text;
+    alter table messages add column if not exists location_id text;
+    alter table leads add column if not exists location_id text;
+    alter table drafts add column if not exists location_id text;
   `);
 }
 
@@ -50,18 +54,19 @@ async function logEvent(contactId, kind, detail = '') {
   await q('insert into events(contact_id,kind,detail) values($1,$2,$3)', [contactId, kind, String(detail).slice(0, 2000)]);
 }
 
-async function getLead(contactId) {
+async function getLead(contactId, locationId) {
   const r = await q('select * from leads where contact_id=$1', [contactId]);
   if (r.rows[0]) return r.rows[0];
-  await q('insert into leads(contact_id) values($1) on conflict do nothing', [contactId]);
+  await q('insert into leads(contact_id, location_id) values($1,$2) on conflict do nothing', [contactId, locationId || null]);
   return (await q('select * from leads where contact_id=$1', [contactId])).rows[0];
 }
 async function saveLead(l) {
   await q(
     `update leads set conversation_id=$2, stage=$3, path=$4, fields=$5, statements=$6, app_complete=$7,
-     statements_complete=$8, handed_off=$9, handoff_reason=$10, updated_at=now() where contact_id=$1`,
+     statements_complete=$8, handed_off=$9, handoff_reason=$10, location_id=coalesce($11, location_id), updated_at=now()
+     where contact_id=$1`,
     [l.contact_id, l.conversation_id, l.stage, l.path, JSON.stringify(l.fields || {}), JSON.stringify(l.statements || []),
-      !!l.app_complete, !!l.statements_complete, !!l.handed_off, l.handoff_reason || null]
+      !!l.app_complete, !!l.statements_complete, !!l.handed_off, l.handoff_reason || null, l.location_id || null]
   );
 }
 

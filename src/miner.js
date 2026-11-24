@@ -13,9 +13,21 @@ const isRunning = () => running;
 const DOC_EXT = /\.(pdf|jpe?g|png|heic|tiff?)(\?|$)/i;
 const hasDocs = (m) => (m.attachments || []).some((a) => DOC_EXT.test(String(a)) || /storage|msgsndr|leadconnector/i.test(String(a)));
 
-// ---------- Step 1: sync conversations + messages into Postgres ----------
+// ---------- Step 1: sync conversations + messages from EVERY account into Postgres ----------
 async function sync({ full = false } = {}) {
-  const lastRun = full ? null : await db.getSetting('last_sync_at');
+  const totals = { seen: 0, wins: 0, accounts: {} };
+  for (const acct of cfg.accounts) {
+    const r = await syncAccount(acct, { full });
+    totals.seen += r.seen;
+    totals.wins += r.wins;
+    totals.accounts[acct.name] = r;
+  }
+  return totals;
+}
+
+async function syncAccount(acct, { full }) {
+  const settingKey = `last_sync_at_${acct.locationId}`;
+  const lastRun = full ? null : await db.getSetting(settingKey);
   const since = lastRun ? new Date(lastRun).getTime() : Date.now() - cfg.mineDaysBack * 864e5;
   const botContacts = new Set((await db.q('select contact_id from leads')).rows.map((r) => r.contact_id));
 
@@ -23,40 +35,40 @@ async function sync({ full = false } = {}) {
   let seen = 0;
   let wins = 0;
   outer: while (seen < cfg.mineMaxConversations) {
-    const r = await ghl.searchConversations({ startAfterDate, limit: 100 });
+    const r = await ghl.searchConversations(acct, { startAfterDate, limit: 100 });
     const convs = r.conversations || [];
     if (!convs.length) break;
 
     for (const c of convs) {
       if (c.lastMessageDate && c.lastMessageDate < since) break outer;
       seen++;
-      const msgs = (await ghl.getAllMessages(c.id, 300)).filter((m) => ghl.CHAT_TYPES.has(m.messageType));
+      const msgs = (await ghl.getAllMessages(acct, c.id, 300)).filter((m) => ghl.CHAT_TYPES.has(m.messageType));
       if (!msgs.length) continue;
 
       const tags = (c.tags || []).map((t) => String(t).toLowerCase());
       const inboundDocs = msgs.some((m) => m.direction === 'inbound' && hasDocs(m));
-      const isWin = inboundDocs || cfg.winTags.some((t) => tags.includes(t));
+      const isWin = inboundDocs || acct.winTags.some((t) => tags.includes(t));
       if (isWin) wins++;
 
       for (const m of msgs) {
         await db.q(
-          `insert into messages(id,conversation_id,contact_id,direction,type,body,attachments,user_id,created_at)
-           values($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict(id) do nothing`,
-          [m.id, c.id, c.contactId, m.direction, m.messageType, m.body || '', JSON.stringify(m.attachments || []), m.userId || null, m.dateAdded]
+          `insert into messages(id,conversation_id,contact_id,direction,type,body,attachments,user_id,created_at,location_id)
+           values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict(id) do nothing`,
+          [m.id, c.id, c.contactId, m.direction, m.messageType, m.body || '', JSON.stringify(m.attachments || []), m.userId || null, m.dateAdded, acct.locationId]
         );
       }
       await db.q(
-        `insert into conversations(id,contact_id,channel,last_message_at,is_win,bot_involved,message_count)
-         values($1,$2,$3,to_timestamp($4/1000.0),$5,$6,$7)
+        `insert into conversations(id,contact_id,channel,last_message_at,is_win,bot_involved,message_count,location_id)
+         values($1,$2,$3,to_timestamp($4/1000.0),$5,$6,$7,$8)
          on conflict(id) do update set last_message_at=excluded.last_message_at, is_win=excluded.is_win,
            bot_involved=excluded.bot_involved, message_count=excluded.message_count, mined_at=null, updated_at=now()`,
-        [c.id, c.contactId, c.lastMessageType || '', c.lastMessageDate || Date.now(), isWin, botContacts.has(c.contactId), msgs.length]
+        [c.id, c.contactId, c.lastMessageType || '', c.lastMessageDate || Date.now(), isWin, botContacts.has(c.contactId), msgs.length, acct.locationId]
       );
     }
     startAfterDate = convs[convs.length - 1].lastMessageDate;
     if (!startAfterDate) break;
   }
-  await db.setSetting('last_sync_at', new Date().toISOString());
+  await db.setSetting(settingKey, new Date().toISOString());
   return { seen, wins };
 }
 

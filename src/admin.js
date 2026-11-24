@@ -9,10 +9,20 @@ const miner = require('./miner');
 const router = express.Router();
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+// Login: browser password prompt, or a link /admin?key=ADMIN_PASSWORD (sets a cookie)
+const crypto = require('crypto');
+const sessionToken = () => crypto.createHash('sha256').update(`ib-admin:${cfg.adminPassword}`).digest('hex');
 router.use((req, res, next) => {
+  if (!cfg.adminPassword) return res.status(503).send('Set ADMIN_PASSWORD');
   const [, b64] = (req.headers.authorization || '').split(' ');
   const [, pass] = Buffer.from(b64 || '', 'base64').toString().split(':');
-  if (cfg.adminPassword && pass === cfg.adminPassword) return next();
+  if (pass === cfg.adminPassword) return next();
+  const cookie = /(?:^|;\s*)ib_admin=([a-f0-9]+)/.exec(req.headers.cookie || '');
+  if (cookie && cookie[1] === sessionToken()) return next();
+  if (req.query.key && req.query.key === cfg.adminPassword) {
+    res.setHeader('Set-Cookie', `ib_admin=${sessionToken()}; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
+    return res.redirect(req.baseUrl + req.path); // drop the key from the address bar
+  }
   res.set('WWW-Authenticate', 'Basic realm="intake-bot"').status(401).send('Login required');
 });
 

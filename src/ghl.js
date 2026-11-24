@@ -99,6 +99,17 @@ async function contactOpportunities(acct, contactId, pipelineId) {
   });
   return r.opportunities || [];
 }
+// Every opportunity in the account (paged), for learning which contacts became real deals
+async function allOpportunities(acct, max = 20000) {
+  const out = [];
+  for (let page = 1; out.length < max; page++) {
+    const r = await ghl(acct, 'GET', '/opportunities/search', { query: { location_id: acct.locationId, limit: 100, page } });
+    const list = r.opportunities || [];
+    out.push(...list);
+    if (list.length < 100) break;
+  }
+  return out;
+}
 const createOpportunity = (acct, o) => ghl(acct, 'POST', '/opportunities/', { body: { status: 'open', ...o } });
 
 async function getCustomFields(acct) {
@@ -119,5 +130,5 @@ async function uploadFileToField(acct, contactId, fieldId, buffer, filename, mim
 
 module.exports = {
   searchConversations, getAllMessages, sendMessage, getContact, updateContact, addTags, removeTags, addNote,
-  getCustomFields, uploadFileToField, findStage, contactOpportunities, createOpportunity, SEND_TYPE, CHAT_TYPES,
+  getCustomFields, uploadFileToField, findStage, contactOpportunities, createOpportunity, allOpportunities, pipelines, SEND_TYPE, CHAT_TYPES,
 };

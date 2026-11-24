@@ -69,7 +69,9 @@ const cfg = {
   // Learning
   mineCron: process.env.MINE_CRON || '0 3 * * *',
   mineDaysBack: int(process.env.MINE_DAYS_BACK, 180),
-  mineMaxConversations: int(process.env.MINE_MAX_CONVERSATIONS, 2000), // per account
+  mineMaxConversations: int(process.env.MINE_MAX_CONVERSATIONS, 6000), // per account
+  // Opportunity stages that mean the merchant sent docs / got submitted (marks their conversations as wins)
+  winStagePattern: new RegExp(process.env.WIN_STAGE_PATTERN || 'submit|underwrit|approv|offer|contract|fund|closed|won|docs? (in|received)|statements? (in|received)|app(lication)? (in|received)', 'i'),
   timezone: process.env.CRON_TZ || 'America/New_York',
 };
 

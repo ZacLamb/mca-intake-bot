@@ -96,6 +96,9 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     { id: 'o1-' + a.key, direction: 'outbound', messageType: 'TYPE_SMS', body: 'Can you send 4 months of statements?', dateAdded: new Date().toISOString() },
     { id: 'o2-' + a.key, direction: 'inbound', messageType: 'TYPE_SMS', body: 'sure', attachments: ['https://x/s.pdf'], dateAdded: new Date().toISOString() },
   ];
+  // A contact with no files but a Funded opportunity also counts as a win
+  ghlMock.pipelines = async () => [{ id: 'p', name: 'Deals', stages: [{ id: 's1', name: 'New' }, { id: 's2', name: 'Funded' }] }];
+  ghlMock.allOpportunities = async (a) => (a.key === '1' ? [{ contactId: 'zz', pipelineStageId: 's2' }, { contactId: 'z1', pipelineStageId: 's1' }] : []);
   const r = await miner.run();
   assert(r.updated && r.wins === 2 && r.accounts['Acct A'].wins === 1 && r.accounts['Acct B'].wins === 1, JSON.stringify(r));
   const locs = (await db.q('select distinct location_id from conversations order by 1')).rows.map((x) => x.location_id);

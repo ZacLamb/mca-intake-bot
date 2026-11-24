@@ -13,6 +13,24 @@ const isRunning = () => running;
 const DOC_EXT = /\.(pdf|jpe?g|png|heic|tiff?)(\?|$)/i;
 const hasDocs = (m) => (m.attachments || []).some((a) => DOC_EXT.test(String(a)) || /storage|msgsndr|leadconnector/i.test(String(a)));
 
+// Contacts whose opportunity reached a "real deal" stage (submitted/approved/funded…) or was won
+async function dealContactIds(acct) {
+  const ids = new Set();
+  try {
+    const stageNames = new Map();
+    for (const p of await ghl.pipelines(acct)) for (const st of p.stages || []) stageNames.set(st.id, `${p.name} / ${st.name}`);
+    const opps = await ghl.allOpportunities(acct);
+    for (const o of opps) {
+      const stage = stageNames.get(o.pipelineStageId) || '';
+      if (o.status === 'won' || cfg.winStagePattern.test(stage)) ids.add(o.contactId || o.contact?.id);
+    }
+    console.log(`[learning] ${acct.name}: ${opps.length} opportunities, ${ids.size} contacts reached a deal stage`);
+  } catch (e) {
+    console.warn(`[learning] ${acct.name}: couldn't read opportunities (${e.message.slice(0, 120)}) — using files/tags only`);
+  }
+  return ids;
+}
+
 // ---------- Step 1: sync conversations + messages from EVERY account into Postgres ----------
 async function sync({ full = false } = {}) {
   const totals = { seen: 0, wins: 0, accounts: {} };
@@ -31,6 +49,7 @@ async function syncAccount(acct, { full }) {
   const lastRun = full ? null : await db.getSetting(settingKey);
   const since = lastRun ? new Date(lastRun).getTime() : Date.now() - cfg.mineDaysBack * 864e5;
   const botContacts = new Set((await db.q('select contact_id from leads')).rows.map((r) => r.contact_id));
+  const dealContacts = await dealContactIds(acct);
 
   let startAfterDate;
   let seen = 0;
@@ -57,7 +76,7 @@ async function syncAccount(acct, { full }) {
 
       const tags = (c.tags || []).map((t) => String(t).toLowerCase());
       const inboundDocs = msgs.some((m) => m.direction === 'inbound' && hasDocs(m));
-      const isWin = inboundDocs || acct.winTags.some((t) => tags.includes(t));
+      const isWin = inboundDocs || dealContacts.has(c.contactId) || acct.winTags.some((t) => tags.includes(t));
       if (isWin) wins++;
 
       for (const m of msgs) {
@@ -121,7 +140,7 @@ Return bullet-point lessons under these headings:
 const MERGE_SYSTEM = `You maintain a playbook that an AI intake assistant for an MCA company follows in SMS/email chats.
 The assistant's ONLY job is collecting the funding application and bank statements. Never include rates, pricing, approval promises, timelines, or advice outside that job.
 Write in plain markdown, max ~1500 words, practical and specific.
-The company already has a sales method (C.A.R.E. for guarded merchants, industry-insider questions, one depth question before the ask, Receive-Reflect-Reframe for objections, E.A.S.Y. close asking for one small thing at a time, value-first follow-ups). Keep the playbook consistent with it: capture what THIS company's reps actually said that worked, in that spirit.`;
+The company already has a sales method (C.A.R.E. = Calm, Acknowledge, Reframe, Engage — for guarded merchants; industry-insider questions, one depth question before the ask, Receive-Reflect-Reframe for objections, E.A.S.Y. close asking for one small thing at a time, value-first follow-ups). Keep the playbook consistent with it: capture what THIS company's reps actually said that worked, in that spirit.`;
 
 async function mergePlaybook(oldPlaybook, lessons, corrections) {
   const user = `CURRENT PLAYBOOK:

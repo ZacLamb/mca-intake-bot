@@ -45,6 +45,7 @@ app.post('/webhook/inbound', intake(false));
 app.post('/webhook/start', intake(true));
 
 app.use('/admin', require('./admin'));
+app.use('/test', require('./testground'));
 
 (async () => {
   const missing = cfg.missing();

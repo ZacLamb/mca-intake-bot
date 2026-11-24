@@ -32,7 +32,7 @@ button.alt{background:#e5e7eb;color:#111}pre{white-space:pre-wrap;background:#f9
 table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:6px;text-align:left;vertical-align:top;font-size:13px}
 .pill{display:inline-block;padding:1px 8px;border-radius:99px;background:#e0e7ff;font-size:12px}
 </style></head><body><header><b>Intake Bot</b><a href="/admin">Dashboard</a><a href="/admin/leads">Leads</a>
-<a href="/admin/playbook">Playbook</a><a href="/admin/fields">GHL fields</a></header><main>${body}</main></body></html>`;
+<a href="/admin/playbook">Playbook</a><a href="/admin/fields">GHL fields</a><a href="/test">Testing ground</a></header><main>${body}</main></body></html>`;
 
 router.get('/', async (req, res) => {
   const mode = await db.getSetting('mode', cfg.defaultMode);

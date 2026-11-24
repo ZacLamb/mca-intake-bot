@@ -291,4 +291,4 @@ async function send(acct, contactId, channel, message) {
   return r;
 }
 
-module.exports = { schedule, send };
+module.exports = { schedule, send, systemPrompt, renderTranscript, RESPOND_TOOL };

@@ -88,6 +88,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const locs = (await db.q('select distinct location_id from conversations order by 1')).rows.map((x) => x.location_id);
   assert.deepEqual(locs, ['locA', 'locB']);
 
+  // Learn-only account never messages
+  B.learnOnly = true;
+  await db.setSetting('account_enabled_2', 'true');
+  await db.q('truncate leads');
+  const before = sent.length;
+  agent.schedule(B, 'c1'); await wait(300);
+  assert.equal(sent.length, before, 'learn-only account never replies');
+  await assert.rejects(() => agent.send(B, 'c1', 'SMS', 'hi'), /learn-only/);
+
   console.log('flow tests passed (2 accounts)');
   await db.pool.end();
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -8,7 +8,8 @@ It learns from your sub-account's past conversations (what got merchants to send
 The bot connects to as many sub-accounts as you configure (`GHL_API_KEY`/`GHL_LOCATION_ID`, then `_2`, `_3`…).
 - **Learning** reads conversations from **all** accounts and builds **one shared playbook**.
 - **Replies** go out through the account the merchant texted. Each account uses its own token, business name, app link and field mapping. The webhook tells the accounts apart by the `location.id` GHL sends; you can add `&account=2` to the URL as a fallback.
-- The dashboard has an ON/OFF switch per account, so one account can be learn-only.
+- Set `LEARN_ONLY_2=true` (or `_3`…) on an account whose **history you only want to learn from**. The bot reads its conversations but can never message from it, and webhooks from it are ignored. Its token only needs read scopes (View Conversations, View Conversation Messages, View Contacts).
+- Messaging accounts also have an ON/OFF switch on the dashboard.
 
 ## How it works
 

@@ -66,8 +66,8 @@ ${missing.length ? `<div class="card" style="border-color:#f87171"><b>Missing va
 ${(await Promise.all(cfg.accounts.map(async (a) => {
     const on = (await db.getSetting(`account_enabled_${a.key}`, 'true')) !== 'false';
     return `<tr><td>${a.key}</td><td>${esc(a.name)}</td><td><code>${esc(a.locationId)}</code></td><td>${esc(a.businessName)}</td><td>${esc(a.appLinkUrl || '—')}</td>
-<td><form method="post" action="/admin/settings"><input type="hidden" name="account_key" value="${a.key}"><input type="hidden" name="account_enabled" value="${on ? 'false' : 'true'}">
-<button class="${on ? '' : 'alt'}">${on ? 'ON' : 'OFF'}</button></form></td></tr>`;
+<td>${a.learnOnly ? '<span class="pill">Learn only</span>' : `<form method="post" action="/admin/settings"><input type="hidden" name="account_key" value="${a.key}"><input type="hidden" name="account_enabled" value="${on ? 'false' : 'true'}">
+<button class="${on ? '' : 'alt'}">${on ? 'ON' : 'OFF'}</button></form>`}</td></tr>`;
   }))).join('')}</table><small>Learning always reads every account; this switch only controls whether the bot replies in that account.</small></div>
 <div class="card"><h3>Drafts waiting for approval (${drafts.length})</h3>
 ${drafts.map((d) => `<div class="card"><div class="pill">${esc(acctName(d.location_id))}</div> <div class="pill">${esc(d.channel)}</div> contact <code>${esc(d.contact_id)}</code> · ${new Date(d.created_at).toLocaleString()}
@@ -136,7 +136,7 @@ router.post('/leads/:id/reset', async (req, res) => {
 router.get('/fields', async (req, res) => {
   const keys = require('./appSchema').chatFields.map((f) => `<code>${f.key}</code>`).join(' ');
   const sections = await Promise.all(
-    cfg.accounts.map(async (a) => {
+    cfg.accounts.filter((a) => !a.learnOnly).map(async (a) => {
       const varName = a.key === '1' ? 'FIELD_MAP' : `FIELD_MAP_${a.key}`;
       const fileVar = a.key === '1' ? 'STATEMENT_FILE_FIELD_ID' : `STATEMENT_FILE_FIELD_ID_${a.key}`;
       try {

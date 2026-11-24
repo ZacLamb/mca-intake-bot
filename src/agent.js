@@ -144,6 +144,7 @@ async function writeFieldsToGhl(acct, contactId, fields) {
 }
 
 async function handle(acct, contactId, { initiate = false } = {}) {
+  if (acct.learnOnly) return; // never message from a learn-only account
   if ((await db.getSetting('bot_enabled', 'true')) === 'false') return;
   if ((await db.getSetting(`account_enabled_${acct.key}`, 'true')) === 'false') return;
 
@@ -282,6 +283,7 @@ async function saveLeadAndTag(acct, contactId, lead, tags) {
 }
 
 async function send(acct, contactId, channel, message) {
+  if (acct.learnOnly) throw new Error(`${acct.name} is learn-only — refusing to send`);
   const r = await ghl.sendMessage(acct, { type: channel, contactId, message });
   const id = r.messageId || r.id;
   if (id) await db.q('insert into bot_messages(id,contact_id) values($1,$2) on conflict do nothing', [id, contactId]);

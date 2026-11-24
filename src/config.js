@@ -24,6 +24,7 @@ function loadAccounts() {
     out.push({
       key: String(i),
       name: env('ACCOUNT_NAME') || `Account ${i}`,
+      learnOnly: /^(1|true|yes)$/i.test(env('LEARN_ONLY') || ''), // history is learned from, bot never messages here
       token,
       locationId,
       businessName: env('BUSINESS_NAME') || process.env.BUSINESS_NAME || 'our funding team',

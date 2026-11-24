@@ -21,7 +21,8 @@ const contactIdFrom = (b) => b.contact_id || b.contactId || b.contact?.id || b.c
 const accountFrom = (req) => {
   const b = req.body || {};
   const id = b.location?.id || b.locationId || b.location_id || req.query.account || req.query.locationId;
-  return cfg.account(id) || (cfg.accounts.length === 1 ? cfg.accounts[0] : null);
+  const live = cfg.accounts.filter((a) => !a.learnOnly);
+  return cfg.account(id) || (live.length === 1 ? live[0] : null);
 };
 
 function intake(initiate) {
@@ -31,6 +32,7 @@ function intake(initiate) {
     if (!contactId) return res.status(400).json({ error: 'no contact id in payload' });
     const acct = accountFrom(req);
     if (!acct) return res.status(400).json({ error: 'unknown GHL account (location id not configured)' });
+    if (acct.learnOnly) return res.json({ ignored: `${acct.name} is learn-only` });
     if (!initiate && req.body.direction === 'outbound') return res.json({ ignored: 'outbound' });
     agent.schedule(acct, contactId, { initiate });
     res.json({ queued: contactId, account: acct.name });

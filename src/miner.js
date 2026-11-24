@@ -20,6 +20,7 @@ async function sync({ full = false } = {}) {
     const r = await syncAccount(acct, { full });
     totals.seen += r.seen;
     totals.wins += r.wins;
+    totals.skipped = (totals.skipped || 0) + r.skipped;
     totals.accounts[acct.name] = r;
   }
   return totals;
@@ -34,6 +35,7 @@ async function syncAccount(acct, { full }) {
   let startAfterDate;
   let seen = 0;
   let wins = 0;
+  let skipped = 0;
   outer: while (seen < cfg.mineMaxConversations) {
     const r = await ghl.searchConversations(acct, { startAfterDate, limit: 100 });
     const convs = r.conversations || [];
@@ -42,7 +44,15 @@ async function syncAccount(acct, { full }) {
     for (const c of convs) {
       if (c.lastMessageDate && c.lastMessageDate < since) break outer;
       seen++;
-      const msgs = (await ghl.getAllMessages(acct, c.id, 300)).filter((m) => ghl.CHAT_TYPES.has(m.messageType));
+      let msgs;
+      try {
+        msgs = (await ghl.getAllMessages(acct, c.id, 300)).filter((m) => ghl.CHAT_TYPES.has(m.messageType));
+      } catch (e) {
+        // One deleted/broken conversation shouldn't stop the whole run
+        skipped++;
+        if (skipped <= 5) console.warn(`[learning] skipped conversation ${c.id} in ${acct.name}: ${e.message.slice(0, 160)}`);
+        continue;
+      }
       if (!msgs.length) continue;
 
       const tags = (c.tags || []).map((t) => String(t).toLowerCase());
@@ -69,7 +79,8 @@ async function syncAccount(acct, { full }) {
     if (!startAfterDate) break;
   }
   await db.setSetting(settingKey, new Date().toISOString());
-  return { seen, wins };
+  console.log(`[learning] ${acct.name}: ${seen} conversations read, ${wins} wins, ${skipped} skipped`);
+  return { seen, wins, skipped };
 }
 
 // ---------- Step 2: turn transcripts into lessons ----------
@@ -178,10 +189,13 @@ async function run({ full = false } = {}) {
   try {
     if (full) await db.q('update conversations set mined_at=null');
     const s = await sync({ full });
+    console.log(`[learning] synced: ${JSON.stringify(s)}`);
     const p = await buildPlaybook();
+    console.log(`[learning] playbook: ${JSON.stringify(p)}`);
     await db.logEvent(null, 'learning', JSON.stringify({ ...s, ...p }));
     return { ...s, ...p };
   } catch (e) {
+    console.error('[learning] failed:', e.message);
     await db.logEvent(null, 'learning_error', e.message);
     throw e;
   } finally {
